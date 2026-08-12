@@ -1,0 +1,8 @@
+# build artefacts
+Acta.app/
+*.o
+*.swiftmodule
+.DS_Store
+
+# meetings live in ~/Documents/Acta, never in the repo
+meetings/
