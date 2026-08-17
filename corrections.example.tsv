@@ -1,0 +1,13 @@
+# Acta — proper noun corrections (example)
+#
+# Speech recognition mangles proper nouns and takes no vocabulary up front, so
+# they get fixed on the way out.
+#
+# Format:   whatcomesout <TAB> whatitshouldbe
+# Case and accents are ignored.
+#
+# Yours lives at ~/Documents/Acta/corrections.tsv and is created for you.
+
+kubernets	Kubernetes
+post gres	PostgreSQL
+super base	Supabase
