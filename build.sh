@@ -33,9 +33,28 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSMicrophoneUsageDescription</key><string>Acta transcribes your voice during the meeting. The audio never leaves this Mac.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Acta uses on-device speech recognition. Nothing is sent anywhere.</string>
   <key>NSAppleEventsUsageDescription</key><string>Acta reads your browser tab URLs to notice when you join a meeting.</string>
+  <key>NSAudioCaptureUsageDescription</key><string>Acta records the call audio so it can transcribe what the other people say. Nothing leaves this Mac.</string>
 </dict>
 </plist>
 PLIST
 
-codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+# Sign with a real development identity when there is one.
+#
+# This matters more than it looks: macOS ties privacy permissions to the code
+# signature. An ad-hoc signature changes on every build, so every rebuild looks
+# like a brand new app and the screen-recording permission you just granted no
+# longer applies — the app then fails to capture system audio while System
+# Settings cheerfully shows it as allowed.
+IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+  | grep "Apple Development" | head -1 | sed -E 's/.*"(.*)"/\1/')
+
+if [ -n "$IDENTITY" ]; then
+  echo "signing as: $IDENTITY"
+  codesign --force --options runtime --sign "$IDENTITY" "$APP"
+else
+  echo "no development identity found; signing ad-hoc"
+  echo "  (the system audio permission will need re-granting after each build)"
+  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+fi
+
 echo "ready: $APP"

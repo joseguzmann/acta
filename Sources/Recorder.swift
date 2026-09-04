@@ -14,7 +14,11 @@ final class Recorder: ObservableObject {
   @Published private(set) var lines: [Line] = []
   @Published private(set) var problem: String?
   @Published private(set) var startedAt: Date?
-  @Published var locale = "en-US"
+  /// Spanish by default: that is what the meetings are in. Remembered across
+  /// launches, because nobody wants to pick it every time.
+  @Published var locale: String = UserDefaults.standard.string(forKey: "locale") ?? "es-MX" {
+    didSet { UserDefaults.standard.set(locale, forKey: "locale") }
+  }
 
   /// What is being said *right now* on each channel, not yet settled. This is
   /// what makes the text flow instead of landing in ten-second blocks.
@@ -160,11 +164,6 @@ final class Recorder: ObservableObject {
   /// the output. It does not matter whether the audio was already playing when
   /// recording started.
   private func openSystemChannel() async {
-    guard SystemTap.requestPermission() else {
-      problem = "Screen and system audio recording permission is missing. "
-        + "Enable Acta under System Settings › Privacy & Security › Screen & System Audio Recording, then reopen the app."
-      return
-    }
     let transcriber = SpeechTranscriber(locale: Locale(identifier: locale),
                                         preset: .progressiveTranscription)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
@@ -183,7 +182,12 @@ final class Recorder: ObservableObject {
             let converted = Recorder.convert(buffer, to: target, with: converter) else { return }
       continuation.yield(AnalyzerInput(buffer: converted))
     }
-    guard started else { problem = "Could not tap system audio."; return }
+    guard started else {
+      problem = "Could not capture system audio. Allow Acta under System Settings › "
+        + "Privacy & Security › Screen & System Audio Recording — it appears in the "
+        + "\"System Audio Recording Only\" list."
+      return
+    }
     do {
       try await analyzer.start(inputSequence: stream)
       analyzers.append(analyzer)

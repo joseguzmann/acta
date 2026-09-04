@@ -113,15 +113,11 @@ struct SettingsView: View {
       }
 
       Section("System audio") {
-        if SystemTap.hasPermission {
-          Label("Screen and system audio recording allowed", systemImage: "checkmark.circle")
-        } else {
-          Text("Acta needs screen and system audio recording permission to hear the call. Without it only your microphone is recorded.")
-            .foregroundStyle(.secondary).font(.callout)
-          Button("Open Privacy settings") {
-            NSWorkspace.shared.open(URL(string:
-              "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-          }
+        Text("To hear the call, Acta needs the \"System Audio Recording Only\" permission — the second list under Screen & System Audio Recording. macOS asks the first time you record; there is no way to check it beforehand.")
+          .foregroundStyle(.secondary).font(.callout)
+        Button("Open Privacy settings") {
+          NSWorkspace.shared.open(URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
         }
       }
 
