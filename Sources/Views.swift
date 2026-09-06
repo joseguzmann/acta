@@ -50,6 +50,67 @@ struct LevelMeter: View {
   }
 }
 
+/// Picking the meeting language, next to the title where it is actually needed.
+/// Buried in Settings it was one screen too far, and getting it wrong wastes the
+/// whole recording.
+struct LanguagePicker: View {
+  @ObservedObject var recorder: Recorder
+  @State private var installed: [String] = []
+  @State private var installing: String?
+  var disabled = false
+
+  static let languages: [(String, String)] = [
+    ("es-MX", "Español (MX)"),
+    ("es-ES", "Español (ES)"),
+    ("es-CL", "Español (CL)"),
+    ("es-US", "Español (US)"),
+    ("en-US", "English (US)"),
+    ("en-GB", "English (UK)"),
+    ("pt-BR", "Português (BR)"),
+    ("fr-FR", "Français"),
+    ("de-DE", "Deutsch"),
+    ("it-IT", "Italiano"),
+  ]
+
+  private var label: String {
+    LanguagePicker.languages.first { $0.0 == recorder.locale }?.1 ?? recorder.locale
+  }
+
+  var body: some View {
+    Menu {
+      ForEach(LanguagePicker.languages, id: \.0) { code, name in
+        Button {
+          recorder.locale = code
+          if !installed.contains(code) { download(code) }
+        } label: {
+          if code == recorder.locale { Label(name, systemImage: "checkmark") }
+          else if installed.contains(code) { Text(name) }
+          else { Text("\(name) — download") }
+        }
+      }
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "globe").font(.caption)
+        Text(installing == recorder.locale ? "downloading…" : label).font(.caption)
+      }
+    }
+    .menuStyle(.borderlessButton)
+    .fixedSize()
+    .disabled(disabled || installing != nil)
+    .help(disabled ? "The language cannot change mid-recording" : "Meeting language")
+    .task { installed = await Recorder.installedLocales() }
+  }
+
+  private func download(_ code: String) {
+    installing = code
+    Task {
+      try? await Recorder.installModel(code)
+      installed = await Recorder.installedLocales()
+      installing = nil
+    }
+  }
+}
+
 // MARK: - Bubble
 
 /// One turn. `them` falls left, `you` falls right: the column says who is
@@ -127,6 +188,10 @@ struct ColumnHeaders: View {
 struct LiveTranscript: View {
   @ObservedObject var recorder: Recorder
 
+  private var isEmpty: Bool {
+    recorder.lines.isEmpty && recorder.draftYou.isEmpty && recorder.draftThem.isEmpty
+  }
+
   var body: some View {
     ScrollViewReader { scroll in
       ScrollView {
@@ -146,13 +211,15 @@ struct LiveTranscript: View {
         .animation(.easeOut(duration: 0.18), value: recorder.lines.count)
       }
       .background(alignment: .center) {
-        Rectangle().fill(Color.secondary.opacity(0.12)).frame(width: 1)
+        if !isEmpty {
+          Rectangle().fill(Color.secondary.opacity(0.12)).frame(width: 1)
+        }
       }
       .onChange(of: recorder.lines.count) { scrollToBottom(scroll) }
       .onChange(of: recorder.draftThem) { scrollToBottom(scroll) }
       .onChange(of: recorder.draftYou) { scrollToBottom(scroll) }
       .overlay(alignment: .center) {
-        if recorder.lines.isEmpty && recorder.draftYou.isEmpty && recorder.draftThem.isEmpty {
+        if isEmpty {
           VStack(spacing: 8) {
             Image(systemName: "waveform").font(.system(size: 34)).foregroundStyle(.tertiary)
             Text("Listening…").foregroundStyle(.secondary)
@@ -200,6 +267,8 @@ struct RecordingBar: View {
         .font(.system(.body, design: .monospaced))
         .foregroundStyle(.secondary)
         .onReceive(clock) { tick = $0 }
+      LanguagePicker(recorder: recorder, disabled: true)
+        .foregroundStyle(.secondary)
       Spacer()
       ForEach(["them", "you"], id: \.self) { key in
         if recorder.channels[key] != nil {

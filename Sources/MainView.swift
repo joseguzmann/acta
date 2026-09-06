@@ -63,6 +63,11 @@ struct MainView: View {
           .controlSize(.large)
           .buttonStyle(.borderedProminent)
           .tint(recorder.recording ? .red : .accentColor)
+
+          if !recorder.recording {
+            LanguagePicker(recorder: recorder)
+              .foregroundStyle(.secondary)
+          }
         }
         .padding(10)
       }
