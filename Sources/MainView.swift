@@ -43,7 +43,7 @@ struct MainView: View {
         }
       }
       .safeAreaInset(edge: .bottom) {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
           if let app = detector.inMeeting, !recorder.recording {
             MeetingPrompt(app: app) {
               currentName = app
@@ -63,11 +63,6 @@ struct MainView: View {
           .controlSize(.large)
           .buttonStyle(.borderedProminent)
           .tint(recorder.recording ? .red : .accentColor)
-
-          if !recorder.recording {
-            LanguagePicker(recorder: recorder)
-              .foregroundStyle(.secondary)
-          }
         }
         .padding(10)
       }
@@ -93,6 +88,11 @@ struct MainView: View {
           Image(systemName: "text.bubble").font(.system(size: 40)).foregroundStyle(.tertiary)
           Text("Pick a meeting, or start recording").foregroundStyle(.secondary)
         }
+      }
+    }
+    .toolbar {
+      ToolbarItem(placement: .automatic) {
+        LanguagePicker(recorder: recorder, disabled: recorder.recording)
       }
     }
     .onChange(of: recorder.recording) { _, now in
