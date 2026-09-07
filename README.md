@@ -82,27 +82,29 @@ If you listen through speakers — most people do — your microphone also picks
 everyone else, and the `you` channel ends up duplicating the whole `them`
 channel.
 
-Since the system channel is clean (the tap never hears your microphone), it can
-be subtracted: a stretch of microphone audio that **already appeared** in the
-system audio is echo.
+**This is cancelled in the audio, not in the text.** `setVoiceProcessingEnabled`
+turns on Apple's voice processing, which knows what is being sent to the speakers
+and subtracts it from the microphone input, adapting to the room's delay — before
+a single word is recognised. Measured on an M5, with the same video playing:
 
-Both channels transcribe the same audio down different paths, so the text never
-matches exactly: *"Yeah, nothing's wrong"* against *"Well, nothing's wrong"*.
-Comparing exact trigrams was too rigid and let obvious echo through. Two
-yardsticks are used over a 60-second window — bigrams and bare words — and either
-one is enough.
+```
+without cancellation:  0.053252
+with cancellation:     0.001258
+reduction:             97.6%
+```
 
-Two details that came from measuring, not guessing:
+Getting there took a wrong turn worth recording. The first attempt compared the
+two **transcripts** and dropped anything from the microphone that had already
+appeared on the call. It half worked, and every one of its failures came from the
+same root: it acts after the fact. It could not judge short phrases ("A puerta
+o." carries one long word, so it was never examined), it needed to hold the
+microphone channel back several seconds so the other side could arrive first —
+which is why your own words showed up late — and every near-miss printed the same
+sentence on both sides.
 
-- **The microphone channel is held back 7 seconds.** Echo sometimes gets
-  transcribed *before* the original, so it has to be waited for. Through the
-  virtual driver this needed 12 seconds; with the tap the channels arrive closer
-  together.
-- **The threshold leans conservative.** A stricter setting once swallowed a real
-  sentence. Extra echo getting through is visible and ignorable; losing your own
-  words is not.
-- **Phrases under four words are never judged.** "Yes", "exactly", "agreed" match
-  anything, and there is no way to tell an echo from a real reply.
+That comparison is still there as a backstop, for machines where voice processing
+does not engage, but with cancellation on only its literal match stays active:
+the statistical thresholds are the ones that can swallow a real sentence.
 
 ### Noticing the meeting
 

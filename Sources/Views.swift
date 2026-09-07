@@ -58,6 +58,8 @@ struct LanguagePicker: View {
   @State private var installed: [String] = []
   @State private var installing: String?
   var disabled = false
+  /// Full-width form under the record button; compact inline in the toolbar.
+  var wide = false
 
   static let languages: [(String, String)] = [
     ("es-MX", "Español (MX)"),
@@ -89,13 +91,29 @@ struct LanguagePicker: View {
         }
       }
     } label: {
-      HStack(spacing: 4) {
-        Image(systemName: "globe").font(.caption)
-        Text(installing == recorder.locale ? "downloading…" : label).font(.caption)
+      if wide {
+        HStack(spacing: 6) {
+          Image(systemName: "globe")
+          Text(installing == recorder.locale ? "downloading…" : label)
+          Spacer(minLength: 0)
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption2).foregroundStyle(.tertiary)
+        }
+        .font(.callout)
+        .padding(.horizontal, 11).padding(.vertical, 7)
+        .contentShape(Rectangle())
+      } else {
+        HStack(spacing: 4) {
+          Image(systemName: "globe").font(.caption)
+          Text(installing == recorder.locale ? "downloading…" : label).font(.caption)
+        }
       }
     }
     .menuStyle(.borderlessButton)
-    .fixedSize()
+    .menuIndicator(.hidden)
+    .modifier(WideMenuChrome(active: wide))
+    .fixedSize(horizontal: !wide, vertical: true)
+    .frame(maxWidth: wide ? .infinity : nil)
     .disabled(disabled || installing != nil)
     .help(disabled ? "The language cannot change mid-recording" : "Meeting language")
     .task { installed = await Recorder.installedLocales() }
@@ -107,6 +125,21 @@ struct LanguagePicker: View {
       try? await Recorder.installModel(code)
       installed = await Recorder.installedLocales()
       installing = nil
+    }
+  }
+}
+
+/// The picker sits right under the record button, so it reads as one control
+/// pair instead of a menu floating loose on the sidebar.
+private struct WideMenuChrome: ViewModifier {
+  let active: Bool
+  func body(content: Content) -> some View {
+    if active {
+      content
+        .background(Color.secondary.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    } else {
+      content
     }
   }
 }
@@ -267,8 +300,6 @@ struct RecordingBar: View {
         .font(.system(.body, design: .monospaced))
         .foregroundStyle(.secondary)
         .onReceive(clock) { tick = $0 }
-      LanguagePicker(recorder: recorder, disabled: true)
-        .foregroundStyle(.secondary)
       Spacer()
       ForEach(["them", "you"], id: \.self) { key in
         if recorder.channels[key] != nil {
@@ -278,6 +309,11 @@ struct RecordingBar: View {
               .font(.caption2).foregroundStyle(.tertiary)
           }
           .help(recorder.channels[key] ?? "")
+          if key == "you" && recorder.echoCancelled {
+            Image(systemName: "waveform.slash")
+              .font(.caption2).foregroundStyle(.tertiary)
+              .help("Echo cancellation on: the speakers are subtracted from your microphone")
+          }
         } else {
           Label("\(key): no channel", systemImage: "exclamationmark.circle")
             .font(.caption2).foregroundStyle(.orange)

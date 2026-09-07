@@ -28,6 +28,10 @@ final class Recorder: ObservableObject {
   /// What each channel latched onto. When the meeting channel fails, everything
   /// gets attributed to the user, and that has to be said on screen.
   @Published private(set) var channels: [String: String] = [:]
+  /// Whether the system's acoustic echo cancellation took. When it does, the
+  /// microphone no longer carries the speakers and the text filter is nearly
+  /// redundant.
+  @Published private(set) var echoCancelled = false
   @Published private(set) var level: [String: Float] = [:]
   private var lastSound: [String: Date] = [:]
 
@@ -41,11 +45,13 @@ final class Recorder: ObservableObject {
   private let echo = EchoFilter()
   private var corrections = Corrections(url: Paths.corrections)
 
-  /// How long the microphone channel waits before a phrase counts as real: echo
-  /// sometimes gets transcribed *before* the original, so it has to be waited
-  /// for. With the system tap both channels arrive closer together than they did
-  /// through a virtual driver, so less margin is needed.
-  private let holdBack: UInt64 = 7_000_000_000
+  /// How long the microphone channel waits before a phrase counts as real.
+  ///
+  /// The wait only exists to let the text filter compare against the call, and
+  /// echo sometimes gets transcribed *before* the original. With hardware echo
+  /// cancellation doing the real work, the backstop barely needs a margin — and
+  /// that wait was the entire reason your own words showed up late.
+  private var holdBack: UInt64 { echoCancelled ? 1_000_000_000 : 7_000_000_000 }
 
   var missingMeetingChannel: Bool { channels["them"] == nil }
 
@@ -88,6 +94,7 @@ final class Recorder: ObservableObject {
     lines = []
     draftYou = ""; draftThem = ""
     channels = [:]; level = [:]; lastSound = [:]
+    echoCancelled = false
     await echo.clear()
     corrections = Corrections(url: Paths.corrections)
 
@@ -128,6 +135,25 @@ final class Recorder: ObservableObject {
     tasks.append(consumeResults(.you, transcriber))
 
     let engine = AVAudioEngine()
+
+    // Cancel the echo in the audio, not in the text.
+    //
+    // Comparing transcripts to spot the speakers bleeding into the microphone
+    // was solving the symptom: it runs late, it cannot judge short phrases, and
+    // every near-miss shows up as the same sentence on both sides. Apple's voice
+    // processing subtracts the output signal from the input before a single word
+    // is recognised, which is what every serious implementation does.
+    //
+    // It has to be enabled while the engine is stopped, and it is not available
+    // on every device, so the text filter stays as a backstop.
+    do {
+      try engine.inputNode.setVoiceProcessingEnabled(true)
+      echoCancelled = true
+    } catch {
+      echoCancelled = false
+    }
+    await echo.setBackstopOnly(echoCancelled)
+
     guard let unit = engine.inputNode.audioUnit else { problem = "Microphone has no audio unit."; return }
     var d = device
     let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
