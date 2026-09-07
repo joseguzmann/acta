@@ -309,10 +309,10 @@ struct RecordingBar: View {
               .font(.caption2).foregroundStyle(.tertiary)
           }
           .help(recorder.channels[key] ?? "")
-          if key == "you" && recorder.echoCancelled {
-            Image(systemName: "waveform.slash")
-              .font(.caption2).foregroundStyle(.tertiary)
-              .help("Echo cancellation on: the speakers are subtracted from your microphone")
+          if key == "you" && recorder.micGated {
+            Image(systemName: "mic.slash.fill")
+              .font(.caption2).foregroundStyle(.orange)
+              .help("Muted while the call is talking, so the speakers do not come back in as you")
           }
         } else {
           Label("\(key): no channel", systemImage: "exclamationmark.circle")
