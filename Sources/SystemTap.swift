@@ -1,7 +1,6 @@
 import CoreAudio
 import AudioToolbox
 import AVFoundation
-import CoreGraphics
 import Foundation
 
 /// Captures whatever is playing on the Mac using a CoreAudio *process tap*.
@@ -21,16 +20,17 @@ final class SystemTap {
 
   static let aggregateUID = "dev.joseguzman.acta.tap"
 
-  /// On macOS, system audio lives under the screen recording permission.
-  /// Without it the tap is created just fine and never delivers a single
-  /// buffer — it fails silently, which is the worst way to fail.
-  static var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
-
-  @discardableResult
-  static func requestPermission() -> Bool {
-    if CGPreflightScreenCaptureAccess() { return true }
-    return CGRequestScreenCaptureAccess()
-  }
+  /// System audio has its own permission — "System Audio Recording Only",
+  /// separate from screen recording — and there is no preflight API for it.
+  ///
+  /// The prompt is triggered by `AudioDeviceStart`, not by creating the tap, so
+  /// the only honest way to know is to try. Gating on
+  /// `CGPreflightScreenCaptureAccess` was wrong twice over: it asks about the
+  /// wrong permission, and it refused before ever reaching the call that would
+  /// have raised the right prompt.
+  ///
+  /// It also needs a stable signing identity: TCC keys its record off the
+  /// signature, so an ad-hoc build asks again on every rebuild.
 
   /// Starts capturing. Returns false when the system does not allow it.
   func start(_ onBuffer: @escaping (AVAudioPCMBuffer) -> Void) -> Bool {
