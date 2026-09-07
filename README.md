@@ -76,35 +76,47 @@ silently, which is the worst way to fail — so Acta asks for it explicitly and
 shows a signal meter per channel, so a dead channel is visible in the moment
 instead of at read time.
 
-### Subtracting the echo
+### Keeping the speakers out of your channel
 
 If you listen through speakers — most people do — your microphone also picks up
 everyone else, and the `you` channel ends up duplicating the whole `them`
 channel.
 
-**This is cancelled in the audio, not in the text.** `setVoiceProcessingEnabled`
-turns on Apple's voice processing, which knows what is being sent to the speakers
-and subtracts it from the microphone input, adapting to the room's delay — before
-a single word is recognised. Measured on an M5, with the same video playing:
+**The microphone is muted while the call is audible.** Crude, but it runs live,
+needs no model, and does not touch the audio you are listening to. It is the
+approach the open source meeting recorders actually ship.
 
-```
-without cancellation:  0.053252
-with cancellation:     0.001258
-reduction:             97.6%
-```
+The threshold is learned, not set. The first attempt used a fixed number that
+sounded reasonable (0.012) and never fired once: a process tap delivers far
+quieter samples than a microphone does, so the bar sat above everything that
+channel ever produced, and a gate that never closes looks exactly like a gate
+that does not work. Now the floor is tracked — falling fast through silences,
+rising slowly — and the gate closes when the signal jumps 3.5× above it.
 
-Getting there took a wrong turn worth recording. The first attempt compared the
-two **transcripts** and dropped anything from the microphone that had already
-appeared on the call. It half worked, and every one of its failures came from the
-same root: it acts after the fact. It could not judge short phrases ("A puerta
-o." carries one long word, so it was never examined), it needed to hold the
-microphone channel back several seconds so the other side could arrive first —
-which is why your own words showed up late — and every near-miss printed the same
-sentence on both sides.
+**The honest cost:** a sentence spoken *over* somebody else is lost rather than
+duplicated. Turn-taking is unaffected.
 
-That comparison is still there as a backstop, for machines where voice processing
-does not engage, but with cancellation on only its literal match stays active:
-the statistical thresholds are the ones that can swallow a real sentence.
+#### Two approaches that were tried and dropped
+
+**Comparing the transcripts.** The first version dropped anything from the
+microphone that had already appeared on the call, using word and bigram overlap.
+Every one of its failures came from the same root — it acts after the fact. It
+could not judge short phrases ("A puerta o." carries one long word, so it was
+never examined), it had to hold the microphone channel back several seconds so
+the other side could arrive first, and every near-miss printed the same sentence
+in both columns. It survives as a backstop, literal matches only.
+
+**Apple's voice processing** (`setVoiceProcessingEnabled`). This one *works*:
+measured at 97.6% less microphone energy with the same audio playing. It was
+still dropped, because it assumes it is running a call and ducks everything else
+so the local speaker is heard over it — quieting the meeting you are trying to
+listen to. The ducking level can be lowered, not turned off: the API's own floor
+is named `min`, not `none`. None of the projects that solved this problem use it,
+which in hindsight was the clue.
+
+Real echo cancellation with an aligned reference signal is what removes the
+trade-off. Acta already captures the reference; what is missing is the alignment
+and the model.
 
 ### Noticing the meeting
 

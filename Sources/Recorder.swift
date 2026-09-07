@@ -31,7 +31,8 @@ final class Recorder: ObservableObject {
   /// Whether the system's acoustic echo cancellation took. When it does, the
   /// microphone no longer carries the speakers and the text filter is nearly
   /// redundant.
-  @Published private(set) var echoCancelled = false
+  /// Whether the microphone is muted right now because the call is audible.
+  @Published private(set) var micGated = false
   @Published private(set) var level: [String: Float] = [:]
   private var lastSound: [String: Date] = [:]
 
@@ -42,6 +43,7 @@ final class Recorder: ObservableObject {
   private var currentURL: URL?
   private var currentName = ""
   private let tap = SystemTap()
+  private let gate = EchoGate()
   private let echo = EchoFilter()
   private var corrections = Corrections(url: Paths.corrections)
 
@@ -51,7 +53,7 @@ final class Recorder: ObservableObject {
   /// echo sometimes gets transcribed *before* the original. With hardware echo
   /// cancellation doing the real work, the backstop barely needs a margin — and
   /// that wait was the entire reason your own words showed up late.
-  private var holdBack: UInt64 { echoCancelled ? 1_000_000_000 : 7_000_000_000 }
+  private let holdBack: UInt64 = 2_000_000_000
 
   var missingMeetingChannel: Bool { channels["them"] == nil }
 
@@ -94,8 +96,8 @@ final class Recorder: ObservableObject {
     lines = []
     draftYou = ""; draftThem = ""
     channels = [:]; level = [:]; lastSound = [:]
-    echoCancelled = false
     await echo.clear()
+    gate.reset()
     corrections = Corrections(url: Paths.corrections)
 
     let installed = await Recorder.installedLocales()
@@ -136,24 +138,9 @@ final class Recorder: ObservableObject {
 
     let engine = AVAudioEngine()
 
-    // Cancel the echo in the audio, not in the text.
-    //
-    // Comparing transcripts to spot the speakers bleeding into the microphone
-    // was solving the symptom: it runs late, it cannot judge short phrases, and
-    // every near-miss shows up as the same sentence on both sides. Apple's voice
-    // processing subtracts the output signal from the input before a single word
-    // is recognised, which is what every serious implementation does.
-    //
-    // It has to be enabled while the engine is stopped, and it is not available
-    // on every device, so the text filter stays as a backstop.
-    do {
-      try engine.inputNode.setVoiceProcessingEnabled(true)
-      echoCancelled = true
-    } catch {
-      echoCancelled = false
-    }
-    await echo.setBackstopOnly(echoCancelled)
-
+    // The device has to be chosen BEFORE voice processing is enabled: turning it
+    // on rebuilds the input chain, and pointing at another device afterwards
+    // leaves it in a state the converter cannot read.
     guard let unit = engine.inputNode.audioUnit else { problem = "Microphone has no audio unit."; return }
     var d = device
     let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
@@ -162,16 +149,37 @@ final class Recorder: ObservableObject {
     guard status == noErr else {
       problem = "Could not point at \(Audio.name(device)) (\(status))."; return
     }
+
     engine.reset()
     let inputFormat = engine.inputNode.inputFormat(forBus: 0)
-    guard inputFormat.sampleRate > 0,
-          let converter = AVAudioConverter(from: inputFormat, to: target) else {
+    guard inputFormat.sampleRate > 0 else {
       problem = "Invalid format on \(Audio.name(device))."; return
     }
 
+    // Voice processing hands back a multi-channel stream: the cleaned voice plus
+    // auxiliary channels carrying the reference signal it used to subtract. Only
+    // the first one is wanted, and feeding nine channels straight to the
+    // converter is what made it refuse.
+    guard let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                   sampleRate: inputFormat.sampleRate,
+                                   channels: 1, interleaved: false),
+          let converter = AVAudioConverter(from: mono, to: target) else {
+      problem = "Could not convert audio from \(Audio.name(device))."; return
+    }
+
     engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-      self?.meter(.you, buffer)
-      guard let converted = Recorder.convert(buffer, to: target, with: converter) else { return }
+      guard let source = buffer.floatChannelData?[0],
+            let voice = AVAudioPCMBuffer(pcmFormat: mono, frameCapacity: buffer.frameLength),
+            let destination = voice.floatChannelData?[0] else { return }
+      voice.frameLength = buffer.frameLength
+      memcpy(destination, source, Int(buffer.frameLength) * MemoryLayout<Float>.size)
+
+      self?.meter(.you, voice)
+      // The speakers are in this signal too. Rather than transcribe them and
+      // sort it out afterwards, the microphone is simply not listened to while
+      // the call is audible.
+      guard self?.gate.callIsTalking == false else { return }
+      guard let converted = Recorder.convert(voice, to: target, with: converter) else { return }
       continuation.yield(AnalyzerInput(buffer: converted))
     }
     do {
@@ -180,7 +188,7 @@ final class Recorder: ObservableObject {
       try engine.start()
       engines.append(engine)
       analyzers.append(analyzer)
-      channels["you"] = "\(Audio.name(device)) · \(Int(inputFormat.sampleRate/1000))kHz"
+      channels["you"] = "\(Audio.name(device)) · \(Int(inputFormat.sampleRate/1000))kHz · muted while the call talks"
     } catch {
       problem = "Microphone channel did not start: \(error.localizedDescription)"
     }
@@ -203,6 +211,7 @@ final class Recorder: ObservableObject {
     let started = tap.start { [weak self] buffer in
       guard let self else { return }
       self.meter(.them, buffer)
+      self.gate.noteCallLevel(Recorder.rms(buffer))
       if converter == nil { converter = AVAudioConverter(from: buffer.format, to: target) }
       guard let converter,
             let converted = Recorder.convert(buffer, to: target, with: converter) else { return }
@@ -237,19 +246,26 @@ final class Recorder: ObservableObject {
     return (error == nil && out.frameLength > 0) ? out : nil
   }
 
-  private nonisolated func meter(_ speaker: Line.Speaker, _ buffer: AVAudioPCMBuffer) {
-    guard let channel = buffer.floatChannelData?[0] else { return }
+  nonisolated static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
+    guard let channel = buffer.floatChannelData?[0] else { return 0 }
     var sum: Float = 0
     let n = Int(buffer.frameLength)
     for i in 0..<n { sum += channel[i] * channel[i] }
-    let rms = n > 0 ? (sum / Float(n)).squareRoot() : 0
-    Task { @MainActor in self.record(level: rms, for: speaker) }
+    return n > 0 ? (sum / Float(n)).squareRoot() : 0
+  }
+
+  private nonisolated func meter(_ speaker: Line.Speaker, _ buffer: AVAudioPCMBuffer) {
+    let level = Recorder.rms(buffer)
+    Task { @MainActor in self.record(level: level, for: speaker) }
   }
 
   private func record(level rms: Float, for speaker: Line.Speaker) {
     let key = speaker.rawValue
-    level[key] = min(1, rms * 12)
-    if rms > 0.004 { lastSound[key] = Date() }
+    // The system tap runs much quieter than the microphone, so the meters would
+    // not be comparable on a single scale.
+    level[key] = min(1, rms * (speaker == .them ? 90 : 12))
+    if rms > (speaker == .them ? 0.0004 : 0.004) { lastSound[key] = Date() }
+    if speaker == .them { micGated = gate.callIsTalking }
   }
 
   /// Consume one channel's results: drafts show up as they come, settled text is
