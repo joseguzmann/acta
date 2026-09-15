@@ -50,7 +50,9 @@ IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
 
 if [ -n "$IDENTITY" ]; then
   echo "signing as: $IDENTITY"
-  codesign --force --options runtime --sign "$IDENTITY" "$APP"
+  codesign --force --options runtime \
+    --entitlements Acta.entitlements \
+    --sign "$IDENTITY" "$APP"
 else
   echo "no development identity found; signing ad-hoc"
   echo "  (the system audio permission will need re-granting after each build)"
