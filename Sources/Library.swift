@@ -52,6 +52,25 @@ final class Library: ObservableObject {
     }
   }
 
+  /// The transcript as something worth pasting elsewhere: the Markdown on disk
+  /// carries `**them**` markers that are noise in a chat or a ticket, and the
+  /// header is only useful once, at the top.
+  func plainText(_ m: Meeting) -> String {
+    let body = lines(m)
+      .map { "[\($0.shortTime)] \($0.speaker == .you ? "you" : "them"): \($0.text)" }
+      .joined(separator: "\n")
+    guard !body.isEmpty else { return "" }
+    return "\(m.title) — \(m.readableDate)\n\n\(body)\n"
+  }
+
+  @discardableResult
+  func copyToClipboard(_ m: Meeting) -> Bool {
+    let text = plainText(m)
+    guard !text.isEmpty else { return false }
+    NSPasteboard.general.clearContents()
+    return NSPasteboard.general.setString(text, forType: .string)
+  }
+
   func rename(_ m: Meeting, to newName: String) {
     let clean = newName.trimmingCharacters(in: .whitespaces)
       .replacingOccurrences(of: "/", with: "-")

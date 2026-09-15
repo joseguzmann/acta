@@ -336,6 +336,8 @@ struct MeetingView: View {
   @ObservedObject var library: Library
   @State private var name = ""
   @State private var editing = false
+  @State private var justCopied = false
+  @State private var copyReset: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -351,6 +353,16 @@ struct MeetingView: View {
         }
         .buttonStyle(.link)
         Spacer()
+        Button(action: copy) {
+          Label(justCopied ? "Copied" : "Copy",
+                systemImage: justCopied ? "checkmark" : "doc.on.doc")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(justCopied ? .green : nil)
+        .help("Copy the whole transcript to the clipboard")
+        .keyboardShortcut("c", modifiers: [.command, .shift])
+
         Button { library.revealInFinder(meeting) } label: { Image(systemName: "folder") }
           .buttonStyle(.borderless).help("Show the file")
         Button(role: .destructive) { library.delete(meeting) } label: { Image(systemName: "trash") }
@@ -377,6 +389,17 @@ struct MeetingView: View {
   private func save() {
     library.rename(meeting, to: name)
     editing = false
+  }
+
+  private func copy() {
+    guard library.copyToClipboard(meeting) else { return }
+    justCopied = true
+    copyReset?.cancel()
+    copyReset = Task {
+      try? await Task.sleep(nanoseconds: 2_000_000_000)
+      guard !Task.isCancelled else { return }
+      justCopied = false
+    }
   }
 }
 
