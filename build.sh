@@ -9,6 +9,21 @@ BIN="$APP/Contents/MacOS/Acta"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+# Xcode refuses to compile anything until its licence has been accepted, which
+# needs sudo and a terminal. The Command Line Tools carry the same compiler and
+# SDK without that gate, so fall back to them rather than stopping the build for
+# a legal prompt — this also lets the project build on a Mac with no Xcode.
+if ! swiftc --version >/dev/null 2>&1; then
+  if [ -d /Library/Developer/CommandLineTools ]; then
+    export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+    echo "Xcode unavailable; building with the Command Line Tools"
+  else
+    echo "no usable Swift toolchain: accept the Xcode licence (sudo xcodebuild -license)"
+    echo "or install the Command Line Tools (xcode-select --install)"
+    exit 1
+  fi
+fi
+
 echo "building…"
 swiftc -O -parse-as-library \
   -target arm64-apple-macos26.0 \
