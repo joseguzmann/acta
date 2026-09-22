@@ -3,11 +3,30 @@ import Foundation
 
 /// CoreAudio helpers: enumerating devices and reading the current output.
 enum Audio {
-  struct Device {
+  struct Device: Identifiable, Hashable {
     let id: AudioDeviceID
     let name: String
     let uid: String
     let inputChannels: Int
+    let transport: UInt32
+
+    /// The Mac's own microphone. Not a guess from the name: macOS says so.
+    var isBuiltIn: Bool { transport == kAudioDeviceTransportTypeBuiltIn }
+
+    /// Sound leaves this device into the room, so a microphone can hear it
+    /// back. Headphones — wired, USB or Bluetooth — cannot feed the microphone,
+    /// which changes whether any echo handling is needed at all.
+    var isLoudspeaker: Bool { transport == kAudioDeviceTransportTypeBuiltIn }
+
+    /// An iPhone offered over Continuity, a loopback driver, an aggregate. All
+    /// of them are real input devices and none of them is what someone means by
+    /// "my microphone" when they start recording a meeting.
+    var isBorrowed: Bool {
+      transport == kAudioDeviceTransportTypeContinuityCaptureWired
+        || transport == kAudioDeviceTransportTypeContinuityCaptureWireless
+        || transport == kAudioDeviceTransportTypeVirtual
+        || transport == kAudioDeviceTransportTypeAggregate
+    }
   }
 
   static func property<T>(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector,
@@ -27,6 +46,11 @@ enum Audio {
   static func uid(_ id: AudioDeviceID) -> String? {
     var s = "" as CFString
     return property(id, kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal, &s) ? s as String : nil
+  }
+
+  static func transportType(_ id: AudioDeviceID) -> UInt32 {
+    var t: UInt32 = 0
+    return property(id, kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal, &t) ? t : 0
   }
 
   static func inputChannels(_ id: AudioDeviceID) -> Int {
@@ -51,7 +75,8 @@ enum Audio {
     else { return [] }
     return ids.compactMap { id in
       guard let u = uid(id) else { return nil }
-      return Device(id: id, name: name(id), uid: u, inputChannels: inputChannels(id))
+      return Device(id: id, name: name(id), uid: u,
+                    inputChannels: inputChannels(id), transport: transportType(id))
     }
   }
 
@@ -63,8 +88,36 @@ enum Audio {
     return all().first { $0.id == id }
   }
 
-  static func microphone() -> Device? {
-    let inputs = all().filter { $0.inputChannels > 0 }
-    return inputs.first { $0.name.localizedCaseInsensitiveContains("microphone") } ?? inputs.first
+  static func inputs() -> [Device] {
+    all().filter { $0.inputChannels > 0 }
+  }
+
+  static func defaultInput() -> Device? {
+    var id: AudioDeviceID = 0
+    guard property(AudioObjectID(kAudioObjectSystemObject),
+                   kAudioHardwarePropertyDefaultInputDevice,
+                   kAudioObjectPropertyScopeGlobal, &id) else { return nil }
+    return all().first { $0.id == id }
+  }
+
+  /// Which microphone to record.
+  ///
+  /// Matching on the name was wrong and picked the wrong device the moment an
+  /// iPhone was nearby: "iPhone Microphone" contains "microphone" too, and
+  /// enumerates first. A phone handed over by Continuity is a real input device
+  /// and never the one someone means when they start recording a meeting.
+  ///
+  /// - an explicit choice always wins
+  /// - otherwise the system default, unless it is borrowed or virtual
+  /// - otherwise the Mac's own microphone, by transport type rather than by name
+  static func microphone(preferred uid: String? = nil) -> Device? {
+    let candidates = inputs()
+    if let uid, !uid.isEmpty, let chosen = candidates.first(where: { $0.uid == uid }) {
+      return chosen
+    }
+    if let fallback = defaultInput(), fallback.inputChannels > 0, !fallback.isBorrowed {
+      return fallback
+    }
+    return candidates.first { $0.isBuiltIn } ?? candidates.first { !$0.isBorrowed } ?? candidates.first
   }
 }

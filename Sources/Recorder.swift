@@ -16,6 +16,11 @@ final class Recorder: ObservableObject {
   @Published private(set) var startedAt: Date?
   /// Spanish by default: that is what the meetings are in. Remembered across
   /// launches, because nobody wants to pick it every time.
+  /// Empty means "decide automatically". Remembered across launches.
+  @Published var inputDeviceUID: String = UserDefaults.standard.string(forKey: "inputDevice") ?? "" {
+    didSet { UserDefaults.standard.set(inputDeviceUID, forKey: "inputDevice") }
+  }
+
   @Published var locale: String = UserDefaults.standard.string(forKey: "locale") ?? "es-MX" {
     didSet { UserDefaults.standard.set(locale, forKey: "locale") }
   }
@@ -33,6 +38,9 @@ final class Recorder: ObservableObject {
   /// redundant.
   /// Whether the microphone is muted right now because the call is audible.
   @Published private(set) var micGated = false
+  /// Whether gating applies at all. Through headphones the call never reaches
+  /// the microphone, so muting it would only throw away the user's own words.
+  @Published private(set) var gatingNeeded = true
   @Published private(set) var level: [String: Float] = [:]
   private var lastSound: [String: Date] = [:]
 
@@ -98,6 +106,7 @@ final class Recorder: ObservableObject {
     channels = [:]; level = [:]; lastSound = [:]
     await echo.clear()
     gate.reset()
+    gatingNeeded = Audio.currentOutput()?.isLoudspeaker ?? true
     corrections = Corrections(url: Paths.corrections)
 
     let installed = await Recorder.installedLocales()
@@ -124,9 +133,10 @@ final class Recorder: ObservableObject {
   }
 
   private func openMicrophoneChannel() async {
-    guard let device = Audio.microphone()?.id else {
+    guard let mic = Audio.microphone(preferred: inputDeviceUID) else {
       problem = "No microphone found."; return
     }
+    let device = mic.id
     let transcriber = SpeechTranscriber(locale: Locale(identifier: locale),
                                         preset: .progressiveTranscription)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
@@ -178,7 +188,7 @@ final class Recorder: ObservableObject {
       // The speakers are in this signal too. Rather than transcribe them and
       // sort it out afterwards, the microphone is simply not listened to while
       // the call is audible.
-      guard self?.gate.callIsTalking == false else { return }
+      if self?.gatingNeeded == true, self?.gate.callIsTalking == true { return }
       guard let converted = Recorder.convert(voice, to: target, with: converter) else { return }
       continuation.yield(AnalyzerInput(buffer: converted))
     }
@@ -188,7 +198,8 @@ final class Recorder: ObservableObject {
       try engine.start()
       engines.append(engine)
       analyzers.append(analyzer)
-      channels["you"] = "\(Audio.name(device)) · \(Int(inputFormat.sampleRate/1000))kHz · muted while the call talks"
+      channels["you"] = "\(Audio.name(device)) · \(Int(inputFormat.sampleRate/1000))kHz"
+        + (gatingNeeded ? " · muted while the call talks" : " · headphones, no gating")
     } catch {
       problem = "Microphone channel did not start: \(error.localizedDescription)"
     }
@@ -265,7 +276,7 @@ final class Recorder: ObservableObject {
     // not be comparable on a single scale.
     level[key] = min(1, rms * (speaker == .them ? 90 : 12))
     if rms > (speaker == .them ? 0.0004 : 0.004) { lastSound[key] = Date() }
-    if speaker == .them { micGated = gate.callIsTalking }
+    if speaker == .them { micGated = gatingNeeded && gate.callIsTalking }
   }
 
   /// Consume one channel's results: drafts show up as they come, settled text is
