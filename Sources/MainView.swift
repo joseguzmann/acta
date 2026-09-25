@@ -65,6 +65,11 @@ struct MainView: View {
           .tint(recorder.recording ? .red : .accentColor)
         }
         .padding(10)
+        // The bar needs its own surface. Without it the list scrolls visibly
+        // underneath the button, which reads as two things stacked wrong rather
+        // than as a footer.
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
       }
     } detail: {
       if recorder.recording {
