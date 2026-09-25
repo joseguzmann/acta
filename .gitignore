@@ -6,3 +6,7 @@ Acta.app/
 
 # meetings live in ~/Documents/Acta, never in the repo
 meetings/
+
+# generated from Tools/MakeIcon.swift
+Acta.icns
+Acta.iconset/

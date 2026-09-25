@@ -24,12 +24,22 @@ if ! swiftc --version >/dev/null 2>&1; then
   fi
 fi
 
+# The icon is generated from Tools/MakeIcon.swift rather than committed as a
+# binary, so it stays diffable and rebuildable.
+if [ ! -f Acta.icns ] || [ Tools/MakeIcon.swift -nt Acta.icns ]; then
+  echo "drawing the icon…"
+  swiftc -O Tools/MakeIcon.swift -o "$TMPDIR/makeicon" && "$TMPDIR/makeicon" >/dev/null \
+    && iconutil -c icns Acta.iconset -o Acta.icns && rm -rf Acta.iconset
+fi
+
 echo "building…"
 swiftc -O -parse-as-library \
   -target arm64-apple-macos26.0 \
   -framework SwiftUI -framework AppKit -framework Speech \
   -framework AVFoundation -framework CoreAudio -framework UserNotifications \
   Sources/*.swift -o "$BIN"
+
+[ -f Acta.icns ] && cp Acta.icns "$APP/Contents/Resources/Acta.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,6 +50,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Acta</string>
   <key>CFBundleIdentifier</key><string>dev.joseguzman.acta</string>
   <key>CFBundleExecutable</key><string>Acta</string>
+  <key>CFBundleIconFile</key><string>Acta</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
